@@ -1,0 +1,329 @@
+---
+header-includes: 
+  - \input{preamble.tex}
+latex_engine: xelatex
+fontsize: 9.5pt
+output:
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+sansfont: Lato
+font: Lato
+geometry: left=0.65in,right=0.65in,top=0.35in,bottom=0.5in
+urlcolor: null
+---
+
+\raggedright
+
+```{r, include=FALSE}
+options(tinytex.verbose = TRUE)
+```
+
+```{r rmarkdown-setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(dev = "cairo_pdf")
+
+library(data.table)
+library(flextable)
+library(ggrepel)
+library(ggthemes)
+library(glue)
+library(gt)
+library(janitor)
+library(knitr)
+library(kableExtra)
+library(lubridate)
+library(scales)
+library(tidyverse)
+library(zoo)
+```
+
+# general functions
+
+```{r include = FALSE}
+# label/table functions
+percentLabel <- function(x, digits = 2, format = "f", ...) {
+  paste0(formatC(x, format = format, digits = digits, ...), "%")
+}
+
+dollarLabel <- function(x, ...) {
+  paste0("$", comma(x), ...)
+}
+```
+
+# lending club - general cleaning function
+
+```{r}
+# cleaning function
+lending_club_clean = function(data, ...) {
+  data %>% 
+    # relabel 'loan status' var 
+    dplyr::mutate(loan_status2 = factor(case_when(str_detect(loan_status, "Late") ~ "Late",
+                                                  TRUE ~ as.character(loan_status)),
+                                        levels = c("Fully Paid", "Current", "Late",
+                                                   "Charged Off", "In Grace Period", "Default")),
+                  # relabel `grade` var
+                  grade = factor(case_when(grade == "F" ~ "FG",
+                                           grade == "G" ~ "FG",
+                                           TRUE ~ as.character(grade)),
+                                 levels = c("A", "B", "C", "D", "E", "FG")),
+                  # create numeric 'interest rate' var
+                  int_rate_dbl = as.double(str_trim(str_replace_all(int_rate, "%", "")))/100) 
+}
+```
+
+# lending club table reproducability functions
+
+```{r}
+# part 1
+# calculate total amount issued by loan status
+# (for data with multiple quarters or at least a dataframe with a column indicating which quarter)
+part1_total_issued = function(data, ...) {
+  data %>% 
+    dplyr::select(quarter, grade, loan_status2, loan_amnt) %>%
+    dplyr::group_by(quarter, grade, loan_status2) %>%
+    # calculate loan amount issued by quarter, grade, and loan status
+    dplyr::summarise(issued = sum(loan_amnt)) %>%
+    dplyr::group_by(quarter, grade) %>%
+    # calculate total loan amount issued by quarter and grade only
+    dplyr::mutate(`Total Issued` = dollarLabel(sum(issued)))
+}  
+  
+  
+                  issued = dollarLabel(issued)) %>%
+    # reshape dataframe long to wide
+    pivot_wider(names_from = loan_status2, 
+                values_from = c(issued)) %>%
+    dplyr::select(quarter, grade, `Total Issued`, `Fully Paid`, `Current`, `Late`, `Charged Off`) 
+}
+```
+
+```{r}
+# part 2
+# calculate principal payments received
+# (for data with multiple quarters or at least a dataframe with a column indicating which quarter)
+part2_principal_calc = function(data, ...) {
+  data %>% 
+    dplyr::group_by(quarter, grade) %>%
+    # calculate total principal payments received
+    dplyr::summarise(`Principal Payments Received` = sum(total_rec_prncp)) %>%
+    dplyr::ungroup() %>%
+    # calculate total row for each grade by quarter
+    bind_rows(group_by(., quarter) %>%
+              summarise(`Principal Payments Received` = sum(`Principal Payments Received`)) %>%
+              mutate(grade = "All")) %>%
+    dplyr::mutate(`Principal Payments Received` = dollarLabel(`Principal Payments Received`),
+                  grade = factor(grade, 
+                                 levels = c("A", "B", "C", "D", "E", "FG", "All"))) %>%
+    dplyr::arrange(quarter)
+}
+```
+
+```{r}
+# part 3
+# calculate interest payments received
+# (for data with multiple quarters or at least a dataframe with a column indicating which quarter)
+part3_rec_int = function(data, ...) {
+  data %>% 
+    dplyr::group_by(quarter, grade) %>%
+    # calculate total principal payments received
+    dplyr::summarise(`Interest Payments Received` = sum(total_rec_int)) %>%
+    dplyr::ungroup() %>%
+    # calculate total row for each grade by quarter
+    bind_rows(group_by(., quarter) %>%
+              summarise(`Interest Payments Received` = sum(`Interest Payments Received`)) %>%
+              mutate(grade = "All")) %>%
+    dplyr::mutate(`Interest Payments Received` = dollarLabel(`Interest Payments Received`),
+                  grade = factor(grade, 
+                                 levels = c("A", "B", "C", "D", "E", "FG", "All"))) %>%
+    dplyr::arrange(quarter)
+}
+```
+
+
+```{r}
+yr2018_q3 <- fread("~/Desktop/dv01/LendingClub/data/LoanStats_securev1_2018Q3.csv") %>%
+  dplyr::mutate(quarter = "2018_Q3")
+yr2018_q4 <- fread("~/Desktop/dv01/LendingClub/data/LoanStats_securev1_2018Q4.csv") %>%
+  dplyr::mutate(quarter = "2018_Q4")
+yr2019_q1 <- fread("~/Desktop/dv01/LendingClub/data/LoanStats_securev1_2019Q1.csv") %>%
+  dplyr::mutate(quarter = "2019_Q1")
+
+lending_club <- bind_rows(yr2018_q3, yr2018_q4, yr2019_q1) %>%
+  # reorder levels in 'quarter' var
+  # this will vary depending on timeframe of future datasets, so 
+  # it is kept separate from the cleaning function
+  dplyr::mutate(quarter = factor(quarter, 
+                                 levels = c("2018_Q3","2018_Q4","2019_Q1"))) %>%
+  # perform cleaning function
+  lending_club_clean()
+
+glimpse(lending_club)
+```
+
+```{r}
+# quality check / exploratory analysis
+# check count of all applications by grade and by quarter
+lending_club_grade_count <- lending_club %>%
+  dplyr::count(quarter, grade) %>%
+  ggplot() +
+  geom_col(aes(y = grade, x = n, fill = grade)) +
+  geom_label(aes(y = grade, x = n, group = quarter, label = n), 
+            size = 2, color = "#000000") +
+  scale_fill_viridis_d() +
+  scale_x_continuous(labels = scales::comma_format()) +
+  labs(title = "Number of Loan Applications,\nby Vintage Quarter and Grade", 
+       fill = "Grade",
+       caption = "Source: Lending Club") +
+  facet_grid(cols = vars(quarter)) +
+  scale_y_discrete(limits = rev) +
+  theme_fivethirtyeight()
+lending_club_grade_count
+```
+
+## it seems that relative to 2018_Q3, there are significantly fewer applications in other quarters. 
+## we should connect with lending club to confirm that they shared all the applications and didn't
+## filter out any observations by accident.
+
+```{r}
+# quality check / exploratory analysis
+# check count of all applications by grade and by quarter
+lending_club_rate_dist <- lending_club %>%
+  ggplot() +
+  geom_boxplot(aes(y = grade, x = int_rate_dbl, fill = grade),
+               alpha = 0.75) +
+  scale_fill_viridis_d() +
+  scale_x_continuous(labels = scales::percent_format()) +
+  labs(title = "Interest Rate Distribution,\nby Vintage Quarter and Grade", 
+       fill = "Grade",
+       caption = "Source: Lending Club") +
+  facet_grid(cols = vars(quarter)) +
+  scale_y_discrete(limits = rev) +
+  theme_fivethirtyeight()
+lending_club_rate_dist
+```
+
+## while there are significantly fewer observations for the two most recent quarters, the distribution  
+## of interest rates seems pretty similar across quarters for each grade. though, the smaller 
+## sample sizes in the two recent quarters is likely resulting in some skewed distributions, as in
+## the case of grade "E" in 2018_Q4, for example.
+
+```{r}
+# quality check / exploratory analysis
+# check total funding of all applications by loan status, grade and by quarter
+lending_club_table_plot <- lending_club %>%
+  dplyr::group_by(quarter, loan_status2, grade) %>%
+  dplyr::summarise(total = sum(loan_amnt)) %>%
+  ggplot() +
+  geom_col(aes(y = grade, x = total, fill = grade),
+               alpha = 0.75) +
+  scale_fill_viridis_d() +
+  scale_x_continuous(labels = scales::dollar_format()) +
+  labs(title = "Interest Rate Distribution,\nby Vintage Quarter and Grade", 
+       fill = "Grade",
+       caption = "Source: Lending Club") +
+  facet_grid(rows = vars(quarter),
+             cols = vars(loan_status2)) +
+  scale_y_discrete(limits = rev) +
+  theme_fivethirtyeight()
+lending_club_table_plot
+```
+
+## step 1
+## total issued by loan status*
+## *missing values for most recent quarters raises a red flag over quality of sample
+
+```{r}
+# calculate total issued by loan status
+# var used to calculate metric: 'loan_amt'
+df1_total_issued <- lending_club %>%
+  part1_total_issued()
+head(df1_total_issued, n = 20)
+```
+
+## step 2
+## principal payments
+
+```{r}
+# calculate principal payments received
+# var used to calculate metric: 'total_rec_prncp'
+df2_principal <- lending_club %>%
+  part2_principal_calc()
+head(df2_principal, n = 20)
+```
+
+## step 3
+## interest payments received
+
+```{r}
+# calculate interest payments received
+# var used to calculate metric: 'total_rec_int'
+df3_rec_int <- lending_club %>%
+  part3_rec_int()
+head(df3_rec_int, n = 20)
+```
+
+## step 4
+## average interest rates
+
+```{r}
+# calculate average interest rate
+# var used to calculate metric: 'int_rate_dbl'*
+# *numeric version of original character var, 'int_rate'
+df4a_avg_rate <- lending_club %>%
+  dplyr::group_by(quarter) %>%
+  dplyr::summarise(`Avg. Interest Rate` = mean(int_rate_dbl)) %>%
+  dplyr::mutate(grade = "All")
+  
+df4b_avg_rate <- lending_club %>%
+  dplyr::group_by(quarter, grade) %>%
+  dplyr::summarise(`Avg. Interest Rate` = mean(int_rate_dbl)) 
+  
+df4_avg_rate <- df4a_avg_rate %>%
+  bind_rows(df4b_avg_rate) %>%
+  dplyr::mutate(`Avg. Interest Rate` = percentLabel(`Avg. Interest Rate`*100),
+                grade = factor(grade, 
+                               levels = c("A", "B", "C", "D", "E", "FG", "All"))) %>%
+  dplyr::arrange(quarter)
+```
+
+```{r}
+table1 <- df1_total_issued %>%
+  dplyr::full_join(df2_principal, by = c("quarter", "grade")) %>%
+  dplyr::left_join(df3_rec_int, by = c("quarter", "grade")) %>%
+  dplyr::left_join(df4_avg_rate, by = c("quarter", "grade"))
+
+head(table1)
+```
+
+
+
+```{r}
+avg_rate2 <- lending_club %>%
+  mutate(c= rowMeans(data.frame(quarter)))
+  
+  dplyr::group_by(quarter) %>%
+  dplyr::summarise(`Avg. Interest Rate` = mean(int_rate_dbl)) 
+```
+
+
+```{r}
+
+funded_amnt_inv <-
+  q4_2018_df %>%
+  transmute(loan_amnt = loan_amnt, value = funded_amnt_inv, 
+              variable = "funded_amnt_inv")
+
+q4_2018 %>%
+  dplyr::count(grade)
+
+
+q4_2018 %>% 
+  dplyr::group_by(grade) %>%
+  dplyr::summarise(issued_total = sum(loan_amnt))
+
+glimpse(q4_2018)
+```
+
