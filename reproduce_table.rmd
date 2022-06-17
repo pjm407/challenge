@@ -20,20 +20,12 @@ options(tinytex.verbose = TRUE)
 ```
 
 ```{r rmarkdown-setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
-knitr::opts_chunk$set(message = FALSE)
-knitr::opts_chunk$set(warning = FALSE)
-knitr::opts_chunk$set(dev = "cairo_pdf")
-
 library(data.table)
 library(flextable)
-library(ggrepel)
 library(ggthemes)
 library(glue)
 library(gt)
 library(janitor)
-library(knitr)
-library(kableExtra)
 library(lubridate)
 library(plyr)
 library(scales)
@@ -52,6 +44,10 @@ percentLabel <- function(x, digits = 2, format = "f", ...) {
 dollarLabel <- function(x, ...) {
   paste0("$", comma(x), ...)
 }
+
+# get current date
+month_day <- format(Sys.time(), "%m%d")
+month_day
 ```
 
 # lending club - general cleaning function
@@ -93,8 +89,8 @@ part1_total_issued = function(data, ...) {
      # reshape dataframe long to wide
     pivot_wider(names_from = loan_status2, 
                 values_from = c(issued)) %>%
-    bind_rows(group_by(., quarter) %>%
-              summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
+    bind_rows(dplyr::group_by(., quarter) %>%
+              dplyr::summarise(across(where(is.numeric), ~ sum(.x, na.rm = TRUE))) %>%
     dplyr::mutate(grade = "All")) %>%
     dplyr::mutate(across(where(is.numeric), ~ dollarLabel(.x)),
                   grade = factor(grade, 
@@ -165,7 +161,7 @@ part3_rec_int = function(data, ...) {
 # setwd("~/Documents/GitHub/challenge")
 
 # pinpoint all zipped files in raw data folder
-temp_unzip <- list.files(path = "~/Documents/GitHub/challenge/raw data", pattern = "*.zip", full.names = TRUE)
+temp_unzip <- list.files(path = "~/Documents/GitHub/challenge/zipped data", pattern = "*.zip", full.names = TRUE)
 
 # unzip all files and store in clean data folder
 ldply(.data = temp_unzip, .fun = unzip, exdir = "~/Documents/GitHub/challenge/clean data")
@@ -216,6 +212,10 @@ lending_club_grade_count <- lending_club %>%
   facet_grid(cols = vars(quarter)) +
   scale_y_discrete(limits = rev) +
   theme_fivethirtyeight()
+
+ggsave(glue::glue("output/fig1_lending_club_grade_count_{month_day}.png"), lending_club_grade_count, 
+       width = 7, height = 4, device = "png")
+
 lending_club_grade_count
 ```
 
@@ -238,13 +238,18 @@ lending_club_rate_dist <- lending_club %>%
   facet_grid(cols = vars(quarter)) +
   scale_y_discrete(limits = rev) +
   theme_fivethirtyeight()
+
+ggsave(glue::glue("output/fig2_lending_club_rate_dist_{month_day}.png"), lending_club_rate_dist, 
+       width = 7, height = 4, device = "png")
+
 lending_club_rate_dist
 ```
 
 ## while there are significantly fewer observations for the two most recent quarters, the distribution  
 ## of interest rates seems pretty similar across quarters for each grade. though, the smaller 
 ## sample sizes in the two recent quarters is likely resulting in some skewed distributions, as in
-## the case of grade "E" in 2018_Q4, for example.
+## the case of grade "E" in 2018_Q4, for example. moreover, the outliers in the earliest available
+## quarter also warrant further inquiry. 
 
 ```{r}
 # quality check / exploratory analysis
@@ -266,6 +271,10 @@ lending_club_table_plot <- lending_club %>%
              cols = vars(loan_status2)) +
   scale_y_discrete(limits = rev) +
   theme_fivethirtyeight()
+
+ggsave(glue::glue("output/fig3_lending_club_table_plot_{month_day}.png"), lending_club_table_plot, 
+       width = 11, height = 7, device = "png")
+
 lending_club_table_plot
 ```
 
@@ -351,6 +360,8 @@ table1 <- df1_total_issued %>%
   dplyr::left_join(df4_avg_rate, by = c("quarter", "grade")) %>%
   dplyr::rename(Quarter = quarter,
                 Grade = grade)
+
+write.csv(table1, glue::glue("output/lendingclub_table_clean_{month_day}.csv"))
 
 head(table1)
 ```
