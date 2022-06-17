@@ -161,17 +161,17 @@ part3_rec_int = function(data, ...) {
 # setwd("~/Documents/GitHub/challenge")
 
 # pinpoint all zipped files in raw data folder
-temp_unzip <- list.files(path = "~/Documents/GitHub/challenge/zipped data", pattern = "*.zip", full.names = TRUE)
+temp_unzip <- list.files(path = "zipped data", pattern = "*.zip", full.names = TRUE)
 
 # unzip all files and store in clean data folder
-ldply(.data = temp_unzip, .fun = unzip, exdir = "~/Documents/GitHub/challenge/clean data")
+ldply(.data = temp_unzip, .fun = unzip, exdir = "clean data")
 ```
 
 ```{r}
 # setwd("~/Documents/GitHub/challenge")
 
 # import all unzipped .csv dataframes in folder
-lending_club <- list.files(path = "~/Documents/GitHub/challenge/clean data",  
+lending_club <- list.files(path = "clean data",  
                        pattern = "*.csv", full.names = TRUE) %>% 
   lapply(fread) %>%                             
   bind_rows() %>%
